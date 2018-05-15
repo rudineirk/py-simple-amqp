@@ -1,0 +1,19 @@
+[run]
+branch = True
+
+[report]
+omit =
+	*/tests/*
+exclude_lines =
+	raise NotImplementedError
+	if self.conf.debug:
+	if settings.DEBUG:
+	if self.debug:
+	if debug:
+	if 0:
+	if __name__ == .__main__.:
+	def __str__
+	def __repr__
+
+[html]
+directory = coverage

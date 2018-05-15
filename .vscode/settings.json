@@ -1,0 +1,16 @@
+// Place your settings in this file to overwrite default and user settings.
+{
+    "[python]":{
+      "editor.formatOnSave":true
+    },
+    "python.linting.pylintEnabled": true,
+    "python.formatting.provider": "yapf",
+    "python.unitTest.pyTestEnabled": true,
+    "python.unitTest.pyTestArgs": [
+        "./"
+    ],
+    "python.pythonPath": "${workspaceRoot}/venv/bin/python",
+    "python.linting.pylintPath": "${env.VIRTUAL_ENV}/bin/pylint",
+    "python.formatting.yapfPath": "${env.VIRTUAL_ENV}/bin/yapf",
+    "python.unitTest.pyTestPath": "${env.VIRTUAL_ENV}/bin/py.test"
+}

@@ -1,0 +1,23 @@
+[[source]]
+url = "https://pypi.python.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+pika = ">=0.10,<0.11"
+
+[dev-packages]
+yapf = "*"
+"flake8" = "*"
+jedi = "*"
+isort = "*"
+pytest = "*"
+pytest-watch = "*"
+pytest-cov = "*"
+pytest-mocha = "*"
+gevent = "*"
+aio-pika = "*"
+twine = "*"
+
+[requires]
+python_version = "3.6"
