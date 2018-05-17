@@ -45,6 +45,7 @@ class AsyncioAmqpConnection(AmqpConnection):
         self._conn = None
         self._channels = {}
         self._consumers = {}
+        self._consumer_queues = {}
         self._queues = {}
         self._exchanges = {}
 
@@ -72,13 +73,14 @@ class AsyncioAmqpConnection(AmqpConnection):
         await self._close_channels()
         await self._close_connection()
 
-    async def cancel_consumer(
+    def cancel_consumer(
         self,
         channel: AmqpChannel,
         consumer: AmqpConsumer,
     ):
         real_channel = self._get_channel(channel.number)
-        self._cancel_consumer(real_channel, consumer.tag)
+        queue = self._consumer_queues[consumer.tag]
+        return self._cancel_consumer(real_channel, queue, consumer.tag)
 
     async def publish(self, channel: AmqpChannel, msg: AmqpMsg):
         self.log.info(
@@ -169,6 +171,9 @@ class AsyncioAmqpConnection(AmqpConnection):
     def _clear_channels(self):
         self._channels = {}
         self._consumers = {}
+        self._consumer_queues = {}
+        self._queues = {}
+        self._exchanges = {}
 
     def _get_queue(self, channel_num, queue_name):
         channel = self._get_channel(channel_num)
@@ -230,9 +235,10 @@ class AsyncioAmqpConnection(AmqpConnection):
                 await self._cancel_consumer(channel_number, consumer_tag)
 
     async def _cancel_consumer(self, channel_number, consumer_tag):
-        channel = self._get_channel(channel_number)
-        await channel.basic_cancel(consumer_tag=consumer_tag)
-        self._consumers[channel.channel_number].remove(consumer_tag)
+        queue = self._consumer_queues[consumer_tag]
+        await queue.cancel(consumer_tag=consumer_tag)
+        self._consumers[channel_number].remove(consumer_tag)
+        self._consumer_queues.pop(consumer_tag)
 
     async def _close_channels(self):
         for channel in self._channels.values():
@@ -246,8 +252,6 @@ class AsyncioAmqpConnection(AmqpConnection):
     async def _on_connection_close(self, _):
         self.log.info('connection closed')
         self._clear_channels()
-        self._queues = {}
-        self._exchanges = {}
         if not self._closing and self._auto_reconnect:
             await sleep(self.reconnect_delay)
             ensure_future(self._action_processor())
@@ -335,6 +339,7 @@ class AsyncioAmqpConnection(AmqpConnection):
         ))
         queue = self._get_queue(action.channel, action.queue)
         self._consumers[action.channel].add(action.tag)
+        self._consumer_queues[action.tag] = queue
 
         def consumer(pika_msg: PikaIncomingMessage):
             msg = AmqpMsg(
