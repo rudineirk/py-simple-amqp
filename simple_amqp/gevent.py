@@ -18,7 +18,7 @@ from .actions import (
 )
 from .base import AmqpChannel, AmqpConnection, AmqpConsumer
 from .data import AmqpMsg, AmqpParameters
-from .log import logger
+from .log import setup_logger
 
 NEXT_ACTION = 1
 BREAK_ACTION = 0
@@ -47,7 +47,7 @@ class PikaConnection(pika.SelectConnection):
 
 
 class GeventAmqpConnection(AmqpConnection):
-    def __init__(self, params: AmqpParameters):
+    def __init__(self, params: AmqpParameters, logger=None):
         super().__init__(params)
         self._pika_conn = None
         self._pika_channels = {}
@@ -62,7 +62,7 @@ class GeventAmqpConnection(AmqpConnection):
         self._processor_fut = None
         self._conn_error_handler = None
         self._consumer_error_handler = None
-        self.log = logger
+        self.log = logger if logger is not None else setup_logger()
 
     def start(self, auto_reconnect=True, wait=True):
         super().start()

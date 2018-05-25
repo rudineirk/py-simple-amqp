@@ -19,7 +19,7 @@ from .actions import (
 )
 from .base import AmqpChannel, AmqpConnection, AmqpConsumer
 from .data import AmqpMsg, AmqpParameters
-from .log import logger
+from .log import setup_logger
 
 EXCHANGE_TYPES_MAP = {
     'direct': PikaExchangeType.DIRECT,
@@ -29,7 +29,7 @@ EXCHANGE_TYPES_MAP = {
 
 
 class AsyncioAmqpConnection(AmqpConnection):
-    def __init__(self, params: AmqpParameters):
+    def __init__(self, params: AmqpParameters, logger=None):
         super().__init__(params)
         self._conn = None
         self._channels = {}
@@ -44,7 +44,7 @@ class AsyncioAmqpConnection(AmqpConnection):
 
         self._conn_error_handler = None
         self._consumer_error_handler = None
-        self.log = logger
+        self.log = logger if logger is not None else setup_logger()
 
     async def start(self, auto_reconnect=True, wait=True):
         super().start()
