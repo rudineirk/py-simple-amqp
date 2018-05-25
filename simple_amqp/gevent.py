@@ -18,17 +18,10 @@ from .actions import (
 )
 from .base import AmqpChannel, AmqpConnection, AmqpConsumer
 from .data import AmqpMsg, AmqpParameters
+from .log import logger
 
 NEXT_ACTION = 1
 BREAK_ACTION = 0
-LOG_LEVEL = environ.get('LOG_LEVEL', 'error')
-log = logging.getLogger('simple_amqp.gevent.conn')
-log_handler = logging.StreamHandler()
-log_handler.setFormatter(logging.Formatter(
-    '[%(asctime)s] %(name)s %(levelname)8s - %(message)s',
-))
-log.addHandler(log_handler)
-log.setLevel(getattr(logging, LOG_LEVEL.upper()))
 
 
 class PikaConnection(pika.SelectConnection):
@@ -69,7 +62,7 @@ class GeventAmqpConnection(AmqpConnection):
         self._processor_fut = None
         self._conn_error_handler = None
         self._consumer_error_handler = None
-        self.log = log
+        self.log = logger
 
     def start(self, auto_reconnect=True, wait=True):
         super().start()

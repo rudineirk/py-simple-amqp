@@ -1,7 +1,5 @@
-import logging
 import traceback
 from asyncio import ensure_future, get_event_loop, sleep
-from os import environ
 
 from aio_pika import ExchangeType as PikaExchangeType
 from aio_pika import IncomingMessage as PikaIncomingMessage
@@ -21,16 +19,7 @@ from .actions import (
 )
 from .base import AmqpChannel, AmqpConnection, AmqpConsumer
 from .data import AmqpMsg, AmqpParameters
-
-LOG_LEVEL = environ.get('LOG_LEVEL', 'error')
-log = logging.getLogger('simple_amqp.asyncio.conn')
-log_handler = logging.StreamHandler()
-log_handler.setFormatter(logging.Formatter(
-    '[%(asctime)s] %(name)s %(levelname)8s - %(message)s',
-))
-log.addHandler(log_handler)
-log.setLevel(getattr(logging, LOG_LEVEL.upper()))
-
+from .log import logger
 
 EXCHANGE_TYPES_MAP = {
     'direct': PikaExchangeType.DIRECT,
@@ -55,7 +44,7 @@ class AsyncioAmqpConnection(AmqpConnection):
 
         self._conn_error_handler = None
         self._consumer_error_handler = None
-        self.log = log
+        self.log = logger
 
     async def start(self, auto_reconnect=True, wait=True):
         super().start()
