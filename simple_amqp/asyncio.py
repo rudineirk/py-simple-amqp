@@ -247,7 +247,10 @@ class AsyncioAmqpConnection(AmqpConnection):
 
     async def _create_channel(self, action: CreateChannel):
         self.log.info('creating channel {}'.format(action.number))
-        channel = await self._conn.channel(action.number)
+        channel = await self._conn.channel(
+            action.number,
+            publisher_confirms=False,
+        )
         self.log.debug('channel {} opened'.format(action.number))
         self._set_channel(action.number, channel)
 
