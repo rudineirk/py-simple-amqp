@@ -61,7 +61,7 @@ def main():
         # wait for messages
         sleep(.1)
 
-    conn.next_stage()
+    conn.run_stage(second_stage)
 
     while SECOND_COUNT < 3:
         # wait for messages

@@ -14,12 +14,16 @@ from .actions import (
     DeclareExchange,
     DeclareQueue
 )
-from .base import AmqpChannel, AmqpConnection, AmqpConsumer
+from .base import AmqpChannel, AmqpConnection, AmqpConsumer, AmqpStage
 from .data import AmqpMsg, AmqpParameters
 from .log import setup_logger
 
 NEXT_ACTION = 1
 BREAK_ACTION = 0
+
+
+class AmqpInterrupted(Exception):
+    pass
 
 
 class PikaConnection(pika.SelectConnection):
@@ -62,23 +66,16 @@ class GeventAmqpConnection(AmqpConnection):
         self._consumer_error_handler = None
         self.log = logger if logger is not None else setup_logger()
 
-    def start(self, auto_reconnect=True, wait=True):
-        stage = super().start()
+    def start(self, auto_reconnect=True):
         self._closing = False
         self._auto_reconnect = auto_reconnect
+        self._run_stages()
 
-        if wait:
-            self._action_processor(stage, first_stage=True)
-        else:
-            spawn(self._action_processor, stage, first_stage=True)
+    def run_stage(self, stage: AmqpStage):
+        if stage not in self.stages:
+            self.add_stage(stage)
 
-    def next_stage(self, wait=True):
-        stage = super().next_stage()
-
-        if wait:
-            self._action_processor(stage)
-        else:
-            spawn(self._action_processor, stage)
+        self._stage_runner(stage)
 
     def stop(self):
         self._closing = True
@@ -124,13 +121,19 @@ class GeventAmqpConnection(AmqpConnection):
             properties,
         )
 
-    def _action_processor(self, stage=None, first_stage=False):
-        self.log.info('Starting action processor')
+    def _run_stages(self):
+        for stage in self.stages:
+            self._stage_runner(stage)
+
+    def _stage_runner(self, stage: AmqpStage):
+        self.log.info('Starting stage [{}]'.format(stage.name))
         while True:
             ok = True
+            exc = None
             try:
                 ok = self._run_actions(stage)
             except Exception as e:
+                exc = e
                 self.log.error('an error ocurred when processing actions')
                 self._processor_fut = None
                 ok = False
@@ -141,20 +144,21 @@ class GeventAmqpConnection(AmqpConnection):
                     traceback.print_exc()
 
             if ok:
-                self.log.info('Action processor done')
+                self.log.info('Stage [{}] done'.format(stage.name))
+                return
+            elif stage != self._stage_zero or not self._auto_reconnect:
+                if exc:
+                    raise exc
+                if stage == self._stage_zero:
+                    raise ConnectionError('Connection failed!')
 
-            if ok:
-                return
-            elif (not self._auto_reconnect and not first_stage):
-                return
+                raise AmqpInterrupted('Could not complete operation')
 
             sleep(self.reconnect_delay)
             self.log.info('retrying to process actions')
 
-    def _run_actions(self, stage=None):
-        actions = self.actions[stage]
-        self.log.info('starting stage [{}]'.format(stage))
-        for action in actions:
+    def _run_actions(self, stage: AmqpStage):
+        for action in stage.actions:
             self.log.debug('action: {}'.format(str(action)))
             self._processor_fut = AsyncResult()
             if action.TYPE == CreateConnection.TYPE:
@@ -275,7 +279,7 @@ class GeventAmqpConnection(AmqpConnection):
         self._current_stage = None
         if not self._closing and self._auto_reconnect:
             sleep(self.reconnect_delay)
-            spawn(self._action_processor)
+            spawn(self._run_stages)
 
         if self._closing_fut:
             self._closing_fut.set(True)
@@ -298,8 +302,12 @@ class GeventAmqpConnection(AmqpConnection):
                 self.log.info('channel {} closed'.format(key))
                 self._remove_channel(key)
 
-        if not self._pika_channels and not self._closing and self._auto_reconnect:
-            spawn(self._action_processor)
+        if (
+                not self._pika_channels and
+                not self._closing and
+                self._auto_reconnect
+        ):
+            spawn(self._run_stages)
 
         if not self._pika_channels and self._closing:
             self._close_connection()

@@ -17,7 +17,7 @@ from .actions import (
     DeclareExchange,
     DeclareQueue
 )
-from .base import AmqpChannel, AmqpConnection, AmqpConsumer
+from .base import AmqpChannel, AmqpConnection, AmqpConsumer, AmqpStage
 from .data import AmqpMsg, AmqpParameters
 from .log import setup_logger
 
@@ -46,23 +46,16 @@ class AsyncioAmqpConnection(AmqpConnection):
         self._consumer_error_handler = None
         self.log = logger if logger is not None else setup_logger()
 
-    async def start(self, auto_reconnect=True, wait=True):
-        stage = super().start()
+    async def start(self, auto_reconnect=True):
         self._closing = False
         self._auto_reconnect = auto_reconnect
+        await self._run_stages()
 
-        if wait:
-            await self._action_processor(stage, first_stage=True)
-        else:
-            ensure_future(self._action_processor(stage, first_stage=True))
+    async def run_stage(self, stage: AmqpStage):
+        if stage not in self.stages:
+            self.add_stage(stage)
 
-    async def next_stage(self, wait=True):
-        stage = super().next_stage()
-
-        if wait:
-            await self._action_processor(stage)
-        else:
-            ensure_future(self._action_processor(stage))
+        await self._stage_runner(stage)
 
     async def stop(self):
         self._closing = True
@@ -112,34 +105,35 @@ class AsyncioAmqpConnection(AmqpConnection):
             msg.topic,
         )
 
-    async def _action_processor(self, stage=None, first_stage=False):
-        self.log.info('Starting action processor')
+    async def _run_stages(self):
+        for stage in self.stages:
+            await self._stage_runner(stage)
+
+    async def _stage_runner(self, stage: AmqpStage):
+        self.log.info('Starting stage [{}]'.format(stage.name))
         while True:
-            ok = True
+            exc = None
             try:
                 await self._run_actions(stage)
             except Exception as e:
+                exc = e
                 self.log.error('an error ocurred when processing actions')
-                ok = False
                 if self._conn_error_handlers:
                     for handler in self._conn_error_handlers:
                         handler(e)
                 else:
                     traceback.print_exc()
 
-            if ok:
-                self.log.info('Action processor done')
-                return
-            elif (not self._auto_reconnect and not first_stage):
-                return
+            if exc is None:
+                self.log.info('Stage [{}] done'.format(stage.name))
+            elif stage != self._stage_zero or not self._auto_reconnect:
+                raise exc
 
             await sleep(self.reconnect_delay)
             self.log.info('retrying to process actions')
 
-    async def _run_actions(self, stage=None):
-        actions = self.actions[stage]
-        self.log.info('starting stage [{}]'.format(stage))
-        for action in actions:
+    async def _run_actions(self, stage: AmqpStage):
+        for action in stage.actions:
             self.log.debug('action: {}'.format(str(action)))
             if action.TYPE == CreateConnection.TYPE:
                 await self._connect(action)
@@ -155,8 +149,6 @@ class AsyncioAmqpConnection(AmqpConnection):
                 await self._bind_queue(action)
             elif action.TYPE == BindConsumer.TYPE:
                 await self._bind_consumer(action)
-
-        self._current_stage = stage
 
     def _get_channel(self, number: int):
         return self._channels[number]
@@ -257,7 +249,7 @@ class AsyncioAmqpConnection(AmqpConnection):
         self._current_stage = None
         if not self._closing and self._auto_reconnect:
             await sleep(self.reconnect_delay)
-            ensure_future(self._action_processor())
+            ensure_future(self._run_stages())
 
     async def _create_channel(self, action: CreateChannel):
         self.log.info('creating channel {}'.format(action.number))

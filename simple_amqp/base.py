@@ -2,8 +2,6 @@ from abc import ABCMeta
 from typing import Dict
 from uuid import uuid4
 
-from dataclasses import dataclass
-
 from .actions import (
     BindConsumer,
     BindExchange,
@@ -15,7 +13,7 @@ from .actions import (
 )
 from .data import AmqpConsumerCallback, AmqpMsg, AmqpParameters
 
-DEFAULT_STAGE_NAME = '0:init'
+ZERO_STAGE_NAME = '0:init'
 
 
 def create_name(name):
@@ -62,26 +60,21 @@ def sort_actions(actions):
 
 
 class AmqpConnection(metaclass=ABCMeta):
-    def __init__(self, params: AmqpParameters, default_stage=DEFAULT_STAGE_NAME):
-        self.actions = {}
-        self._default_stage = self.stage(default_stage)
-        self._current_stage = None
-
-        self.add_action(CreateConnection(
+    def __init__(self, params: AmqpParameters, zero_stage=ZERO_STAGE_NAME):
+        self.stages = []
+        self._stage_zero = self.stage(zero_stage)
+        self._stage_zero.add_action(CreateConnection(
             host=params.host,
             port=params.port,
             username=params.username,
             password=params.password,
             vhost=params.vhost,
         ))
+        self.stages.append(self._stage_zero)
 
         self._channel_number = 1
         self._conn_error_handlers = set()
         self._consumer_error_handlers = set()
-
-    @property
-    def stages(self):
-        return sorted(self.actions.keys())
 
     def add_conn_error_handler(self, handler):
         self._conn_error_handlers.add(handler)
@@ -89,27 +82,15 @@ class AmqpConnection(metaclass=ABCMeta):
     def add_consumer_error_handler(self, handler):
         self._consumer_error_handlers.add(handler)
 
+    def run_stage(self, stage: 'AmqpStage'):
+        raise NotImplementedError
+
+    def add_stage(self, stage: 'AmqpStage'):
+        stage.sort_actions()
+        self.stages.append(stage)
+
     def start(self):
-        self._sort_actions()
-        self._current_stage = None
-        stage = self.stages[0]
-        return stage
-
-    def next_stage(self):
-        if self._current_stage is None:
-            raise ConnectionError('Connection has not been started')
-
-        stage = None
-        try:
-            pos = self.stages.index(self._current_stage)
-            stage = self.stages[pos + 1]
-        except (IndexError, ValueError):
-            pass
-
-        if stage is None:
-            raise IndexError('No more stages')
-
-        return stage
+        raise NotImplementedError
 
     def stop(self):
         raise NotImplementedError
@@ -129,39 +110,37 @@ class AmqpConnection(metaclass=ABCMeta):
         self._channel_number += 1
         return AmqpChannel(self, number, stage=stage)
 
-    def stage(self, name: str=DEFAULT_STAGE_NAME) -> 'AmqpStage':
-        stage = AmqpStage(name)
-        if stage.name not in self.actions:
-            self.actions[stage.name] = []
+    def stage(self, name: str=None) -> 'AmqpStage':
+        if name is None:
+            return self._stage_zero
 
-        return stage
-
-    def add_action(self, action, stage: 'AmqpStage' = None):
-        if stage is None:
-            stage = self._default_stage
-
-        self.actions[stage.name].append(action)
-
-    def _sort_actions(self):
-        for stage, actions in self.actions.items():
-            self.actions[stage] = sort_actions(actions)
+        return AmqpStage(name)
 
 
-@dataclass(frozen=True)
 class AmqpStage:
-    name: str = DEFAULT_STAGE_NAME
+    def __init__(self, name: str):
+        self.name = name
+        self.actions = []
+
+    def add_action(self, action):
+        self.actions.append(action)
+
+    def sort_actions(self):
+        self.actions = sort_actions(self.actions)
 
 
 class AmqpChannel:
     def __init__(self, conn, number=-1, stage: AmqpStage = None):
         self.conn = conn
+        self.stage = stage
         self.number = number
         self._queue_cache = {}
         self._exchange_cache = {}
 
-        self.conn.add_action(CreateChannel(
+        stage = stage if stage else self.conn.stage()
+        stage.add_action(CreateChannel(
             number=number,
-        ), stage=stage)
+        ))
 
     def queue(
             self,
@@ -251,14 +230,15 @@ class AmqpQueue:
         if props is None:
             props = {}
 
-        self.conn.add_action(DeclareQueue(
+        stage = stage if stage else self.conn.stage()
+        stage.add_action(DeclareQueue(
             channel=channel.number,
             name=self.name,
             durable=durable,
             exclusive=exclusive,
             auto_delete=auto_delete,
             props=props,
-        ), stage=stage)
+        ))
 
     def bind(
             self,
@@ -270,13 +250,14 @@ class AmqpQueue:
         if props is None:
             props = {}
 
-        self.conn.add_action(BindQueue(
+        stage = stage if stage else self.conn.stage()
+        stage.add_action(BindQueue(
             channel=self.channel.number,
             queue=self.name,
             exchange=exchange.name,
             routing_key=routing_key,
             props=props,
-        ), stage=stage)
+        ))
         return self
 
     def consume(
@@ -318,7 +299,8 @@ class AmqpExchange:
         if props is None:
             props = {}
 
-        self.conn.add_action(DeclareExchange(
+        stage = stage if stage else self.conn.stage()
+        stage.add_action(DeclareExchange(
             channel=channel.number,
             name=self.name,
             type=type,
@@ -326,7 +308,7 @@ class AmqpExchange:
             auto_delete=auto_delete,
             internal=internal,
             props=props,
-        ), stage=stage)
+        ))
 
     def bind(
             self,
@@ -338,13 +320,14 @@ class AmqpExchange:
         if props is None:
             props = {}
 
-        self.conn.add_action(BindExchange(
+        stage = stage if stage else self.conn.stage()
+        stage.add_action(BindExchange(
             channel=self.channel.number,
             src_exchange=exchange.name,
             dst_exchange=self.name,
             routing_key=routing_key,
             props=props,
-        ), stage=stage)
+        ))
         return self
 
 
@@ -368,7 +351,8 @@ class AmqpConsumer:
         if props is None:
             props = {}
 
-        conn.add_action(BindConsumer(
+        stage = stage if stage else self.conn.stage()
+        stage.add_action(BindConsumer(
             channel=channel.number,
             queue=queue.name,
             tag=self.tag,
@@ -376,7 +360,7 @@ class AmqpConsumer:
             auto_ack=auto_ack,
             exclusive=exclusive,
             props=props,
-        ), stage=stage)
+        ))
 
     def cancel(self):
         self.channel.cancel_consumer(self)

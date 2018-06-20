@@ -29,7 +29,7 @@ def main():
             payload=b'first',
         ))
 
-    conn.next_stage()
+    conn.run_stage(second_stage)
 
     for _ in range(3):
         sleep(1)
