@@ -126,6 +126,7 @@ class AsyncioAmqpConnection(AmqpConnection):
 
             if exc is None:
                 self.log.info('Stage [{}] done'.format(stage.name))
+                return
             elif stage != self._stage_zero or not self._auto_reconnect:
                 raise exc
 
