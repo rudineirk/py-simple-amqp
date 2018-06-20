@@ -1,6 +1,4 @@
-import logging
 import traceback
-from os import environ
 from time import sleep
 
 import pika
@@ -65,17 +63,27 @@ class GeventAmqpConnection(AmqpConnection):
         self.log = logger if logger is not None else setup_logger()
 
     def start(self, auto_reconnect=True, wait=True):
-        super().start()
+        stage = super().start()
         self._closing = False
         self._auto_reconnect = auto_reconnect
+
         if wait:
-            self._action_processor()
+            self._action_processor(stage, first_stage=True)
         else:
-            spawn(self._action_processor)
+            spawn(self._action_processor, stage, first_stage=True)
+
+    def next_stage(self, wait=True):
+        stage = super().next_stage()
+
+        if wait:
+            self._action_processor(stage)
+        else:
+            spawn(self._action_processor, stage)
 
     def stop(self):
         self._closing = True
         self._closing_fut = AsyncResult()
+        self._current_stage = None
 
         self._stop_consuming()
         sleep(2)
@@ -116,12 +124,12 @@ class GeventAmqpConnection(AmqpConnection):
             properties,
         )
 
-    def _action_processor(self):
+    def _action_processor(self, stage=None, first_stage=False):
         self.log.info('Starting action processor')
         while True:
             ok = True
             try:
-                ok = self._run_actions()
+                ok = self._run_actions(stage)
             except Exception as e:
                 self.log.error('an error ocurred when processing actions')
                 self._processor_fut = None
@@ -137,14 +145,16 @@ class GeventAmqpConnection(AmqpConnection):
 
             if ok:
                 return
-            elif not self._auto_reconnect:
+            elif (not self._auto_reconnect and not first_stage):
                 return
 
             sleep(self.reconnect_delay)
             self.log.info('retrying to process actions')
 
-    def _run_actions(self):
-        for action in self.actions:
+    def _run_actions(self, stage=None):
+        actions = self.actions[stage]
+        self.log.info('starting stage [{}]'.format(stage))
+        for action in actions:
             self.log.debug('action: {}'.format(str(action)))
             self._processor_fut = AsyncResult()
             if action.TYPE == CreateConnection.TYPE:
@@ -166,6 +176,7 @@ class GeventAmqpConnection(AmqpConnection):
             if res != NEXT_ACTION:
                 return False
 
+        self._current_stage = stage
         return True
 
     def _next_action(self, status=NEXT_ACTION):
@@ -238,6 +249,7 @@ class GeventAmqpConnection(AmqpConnection):
         self._next_action()
 
     def _on_connection_error(self, *_):
+        self._current_stage = None
         self.log.info('connection error')
         self._next_action(BREAK_ACTION)
 
@@ -260,6 +272,7 @@ class GeventAmqpConnection(AmqpConnection):
 
         self._clear_channels()
         self._pika_conn = None
+        self._current_stage = None
         if not self._closing and self._auto_reconnect:
             sleep(self.reconnect_delay)
             spawn(self._action_processor)

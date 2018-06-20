@@ -2,6 +2,8 @@ from abc import ABCMeta
 from typing import Dict
 from uuid import uuid4
 
+from dataclasses import dataclass
+
 from .actions import (
     BindConsumer,
     BindExchange,
@@ -13,6 +15,8 @@ from .actions import (
 )
 from .data import AmqpConsumerCallback, AmqpMsg, AmqpParameters
 
+DEFAULT_STAGE_NAME = '0:init'
+
 
 def create_name(name):
     if not name:
@@ -21,9 +25,48 @@ def create_name(name):
     return name
 
 
+def sort_actions(actions):
+    connections = []
+    channels = []
+    exchange_declarations = []
+    queue_declarations = []
+    exchange_bindings = []
+    queue_bindings = []
+    consumer_bindings = []
+
+    for action in actions:
+        if action.TYPE == CreateConnection.TYPE:
+            connections.append(action)
+        elif action.TYPE == CreateChannel.TYPE:
+            channels.append(action)
+        elif action.TYPE == DeclareExchange.TYPE:
+            exchange_declarations.append(action)
+        elif action.TYPE == DeclareQueue.TYPE:
+            queue_declarations.append(action)
+        elif action.TYPE == BindExchange.TYPE:
+            exchange_bindings.append(action)
+        elif action.TYPE == BindQueue.TYPE:
+            exchange_bindings.append(action)
+        elif action.TYPE == BindConsumer.TYPE:
+            consumer_bindings.append(action)
+
+    return [
+        *connections,
+        *channels,
+        *exchange_declarations,
+        *queue_declarations,
+        *exchange_bindings,
+        *queue_bindings,
+        *consumer_bindings,
+    ]
+
+
 class AmqpConnection(metaclass=ABCMeta):
-    def __init__(self, params: AmqpParameters):
-        self.actions = []
+    def __init__(self, params: AmqpParameters, default_stage=DEFAULT_STAGE_NAME):
+        self.actions = {}
+        self._default_stage = self.stage(default_stage)
+        self._current_stage = None
+
         self.add_action(CreateConnection(
             host=params.host,
             port=params.port,
@@ -44,21 +87,29 @@ class AmqpConnection(metaclass=ABCMeta):
 
     def start(self):
         self._sort_actions()
+        self._current_stage = None
+        stage = sorted(self.actions.keys())[0]
+        return stage
+
+    def next_stage(self):
+        if self._current_stage is None:
+            raise ConnectionError('Connection has not been started')
+
+        stages = sorted(self.actions.keys())
+        stage = None
+        try:
+            pos = stages.index(self._current_stage)
+            stage = stages[pos + 1]
+        except (IndexError, ValueError):
+            pass
+
+        if stage is None:
+            raise IndexError('No more stages')
+
+        return stage
 
     def stop(self):
         raise NotImplementedError
-
-    def channel(self) -> 'AmqpChannel':
-        number = self._channel_number
-        self._channel_number += 1
-
-        self.add_action(CreateChannel(
-            number=number,
-        ))
-        return AmqpChannel(self, number)
-
-    def add_action(self, action):
-        self.actions.append(action)
 
     def cancel_consumer(
             self,
@@ -70,48 +121,44 @@ class AmqpConnection(metaclass=ABCMeta):
     def publish(self, channel: 'AmqpChannel', msg: AmqpMsg):
         raise NotImplementedError
 
+    def channel(self, stage: 'AmqpStage' = None) -> 'AmqpChannel':
+        number = self._channel_number
+        self._channel_number += 1
+        return AmqpChannel(self, number, stage=stage)
+
+    def stage(self, name: str=DEFAULT_STAGE_NAME) -> 'AmqpStage':
+        stage = AmqpStage(name)
+        if stage.name not in self.actions:
+            self.actions[stage.name] = []
+
+        return stage
+
+    def add_action(self, action, stage: 'AmqpStage' = None):
+        if stage is None:
+            stage = self._default_stage
+
+        self.actions[stage.name].append(action)
+
     def _sort_actions(self):
-        connections = []
-        channels = []
-        exchange_declarations = []
-        queue_declarations = []
-        exchange_bindings = []
-        queue_bindings = []
-        consumer_bindings = []
+        for stage, actions in self.actions.items():
+            self.actions[stage] = sort_actions(actions)
 
-        for action in self.actions:
-            if action.TYPE == CreateConnection.TYPE:
-                connections.append(action)
-            elif action.TYPE == CreateChannel.TYPE:
-                channels.append(action)
-            elif action.TYPE == DeclareExchange.TYPE:
-                exchange_declarations.append(action)
-            elif action.TYPE == DeclareQueue.TYPE:
-                queue_declarations.append(action)
-            elif action.TYPE == BindExchange.TYPE:
-                exchange_bindings.append(action)
-            elif action.TYPE == BindQueue.TYPE:
-                exchange_bindings.append(action)
-            elif action.TYPE == BindConsumer.TYPE:
-                consumer_bindings.append(action)
 
-        self.actions = [
-            *connections,
-            *channels,
-            *exchange_declarations,
-            *queue_declarations,
-            *exchange_bindings,
-            *queue_bindings,
-            *consumer_bindings,
-        ]
+@dataclass(frozen=True)
+class AmqpStage:
+    name: str = DEFAULT_STAGE_NAME
 
 
 class AmqpChannel:
-    def __init__(self, conn, number=-1):
+    def __init__(self, conn, number=-1, stage: AmqpStage = None):
         self.conn = conn
         self.number = number
         self._queue_cache = {}
         self._exchange_cache = {}
+
+        self.conn.add_action(CreateChannel(
+            number=number,
+        ), stage=stage)
 
     def queue(
             self,
@@ -120,6 +167,7 @@ class AmqpChannel:
             exclusive: bool=False,
             auto_delete: bool=False,
             props: Dict[str, str]=None,
+            stage: AmqpStage = None,
     ) -> 'AmqpQueue':
         try:
             if name:
@@ -134,6 +182,7 @@ class AmqpChannel:
             exclusive=exclusive,
             auto_delete=auto_delete,
             props=props,
+            stage=stage,
         )
         if not name:
             return queue
@@ -149,6 +198,7 @@ class AmqpChannel:
             auto_delete: bool=False,
             internal: bool=False,
             props: Dict[str, str]=None,
+            stage: AmqpStage = None,
     ) -> 'AmqpExchange':
         try:
             if name:
@@ -164,6 +214,7 @@ class AmqpChannel:
             auto_delete=auto_delete,
             internal=internal,
             props=props,
+            stage=stage,
         )
         if not name:
             return exchange
@@ -188,6 +239,7 @@ class AmqpQueue:
             exclusive: bool=False,
             auto_delete: bool=False,
             props: Dict[str, str]=None,
+            stage: AmqpStage = None,
     ):
         self.conn = conn
         self.channel = channel
@@ -203,13 +255,14 @@ class AmqpQueue:
             exclusive=exclusive,
             auto_delete=auto_delete,
             props=props,
-        ))
+        ), stage=stage)
 
     def bind(
             self,
             exchange: 'AmqpExchange',
             routing_key: str,
             props: Dict[str, str] = None,
+            stage: AmqpStage = None,
     ):
         if props is None:
             props = {}
@@ -220,7 +273,7 @@ class AmqpQueue:
             exchange=exchange.name,
             routing_key=routing_key,
             props=props,
-        ))
+        ), stage=stage)
         return self
 
     def consume(
@@ -230,6 +283,7 @@ class AmqpQueue:
             exclusive: bool=False,
             nack_requeue: bool=True,
             props: Dict[str, str] = None,
+            stage: AmqpStage = None,
     ) -> 'AmqpConsumer':
         return AmqpConsumer(
             self.conn, self.channel, self,
@@ -237,6 +291,7 @@ class AmqpQueue:
             auto_ack=auto_ack,
             exclusive=exclusive,
             nack_requeue=nack_requeue,
+            stage=stage,
         )
 
 
@@ -251,6 +306,7 @@ class AmqpExchange:
             auto_delete: bool = False,
             internal: bool = False,
             props: Dict[str, str]=None,
+            stage: AmqpStage = None,
     ):
         self.conn = conn
         self.channel = channel
@@ -267,13 +323,14 @@ class AmqpExchange:
             auto_delete=auto_delete,
             internal=internal,
             props=props,
-        ))
+        ), stage=stage)
 
     def bind(
             self,
             exchange: 'AmqpExchange',
             routing_key: str,
             props: Dict[str, str] = None,
+            stage: AmqpStage = None,
     ):
         if props is None:
             props = {}
@@ -284,7 +341,7 @@ class AmqpExchange:
             dst_exchange=self.name,
             routing_key=routing_key,
             props=props,
-        ))
+        ), stage=stage)
         return self
 
 
@@ -299,6 +356,7 @@ class AmqpConsumer:
             exclusive: bool = False,
             nack_requeue: bool = True,
             props: Dict[str, str] = None,
+            stage: AmqpStage = None,
     ):
         self.conn = conn
         self.channel = channel
@@ -315,7 +373,7 @@ class AmqpConsumer:
             auto_ack=auto_ack,
             exclusive=exclusive,
             props=props,
-        ))
+        ), stage=stage)
 
     def cancel(self):
         self.channel.cancel_consumer(self)
