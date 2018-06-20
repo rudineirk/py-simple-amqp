@@ -79,6 +79,10 @@ class AmqpConnection(metaclass=ABCMeta):
         self._conn_error_handlers = set()
         self._consumer_error_handlers = set()
 
+    @property
+    def stages(self):
+        return sorted(self.actions.keys())
+
     def add_conn_error_handler(self, handler):
         self._conn_error_handlers.add(handler)
 
@@ -88,18 +92,17 @@ class AmqpConnection(metaclass=ABCMeta):
     def start(self):
         self._sort_actions()
         self._current_stage = None
-        stage = sorted(self.actions.keys())[0]
+        stage = self.stages[0]
         return stage
 
     def next_stage(self):
         if self._current_stage is None:
             raise ConnectionError('Connection has not been started')
 
-        stages = sorted(self.actions.keys())
         stage = None
         try:
-            pos = stages.index(self._current_stage)
-            stage = stages[pos + 1]
+            pos = self.stages.index(self._current_stage)
+            stage = self.stages[pos + 1]
         except (IndexError, ValueError):
             pass
 
