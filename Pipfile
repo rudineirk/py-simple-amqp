@@ -16,6 +16,7 @@ pytest-watch = "*"
 pytest-cov = "*"
 pytest-mocha = "*"
 gevent = "*"
+greenlet = "*"
 aio-pika = "*"
 twine = "*"
 
