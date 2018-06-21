@@ -44,6 +44,7 @@ class AsyncioAmqpConnection(AmqpConnection):
         self._queues = {}
         self._exchanges = {}
 
+        self._connected = False
         self._closing = False
         self._auto_reconnect = False
         self.reconnect_delay = 1
@@ -64,8 +65,8 @@ class AsyncioAmqpConnection(AmqpConnection):
         await self._stage_runner(stage)
 
     async def stop(self):
+        self._connected = False
         self._closing = True
-        self._current_stage = None
 
         await self._stop_consuming()
         await self._close_channels()
@@ -81,7 +82,7 @@ class AsyncioAmqpConnection(AmqpConnection):
         return self._cancel_consumer(real_channel, queue, consumer.tag)
 
     async def publish(self, channel: AmqpChannel, msg: AmqpMsg):
-        if not self._channels:
+        if not self._connected:
             raise AmqpConnectionNotOpen
 
         self.log.info(
@@ -115,8 +116,11 @@ class AsyncioAmqpConnection(AmqpConnection):
         )
 
     async def _run_stages(self):
+        self._connected = False
         for stage in self.stages:
             await self._stage_runner(stage)
+
+        self._connected = True
 
     async def _stage_runner(self, stage: AmqpStage):
         self.log.info('Starting stage [{}]'.format(stage.name))
@@ -251,12 +255,11 @@ class AsyncioAmqpConnection(AmqpConnection):
         self._closing = True
         await self._conn.close()
         self._conn = None
-        self._current_stage = None
 
     async def _on_connection_close(self, _):
         self.log.info('connection closed')
+        self._connected = False
         self._clear_channels()
-        self._current_stage = None
         if not self._closing and self._auto_reconnect:
             await sleep(self.reconnect_delay)
             ensure_future(self._run_stages())

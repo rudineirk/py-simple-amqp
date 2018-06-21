@@ -61,6 +61,7 @@ class GeventAmqpConnection(AmqpConnection):
         self._pika_channels = {}
         self._pika_consumers = {}
 
+        self._connected = False
         self._closing = False
         self._closing_fut = None
         self._consumer_cancel_fut = None
@@ -84,9 +85,9 @@ class GeventAmqpConnection(AmqpConnection):
         self._stage_runner(stage)
 
     def stop(self):
+        self._connected = False
         self._closing = True
         self._closing_fut = AsyncResult()
-        self._current_stage = None
 
         self._stop_consuming()
         sleep(2)
@@ -99,7 +100,7 @@ class GeventAmqpConnection(AmqpConnection):
         self._cancel_consumer(real_channel, consumer.tag)
 
     def publish(self, channel: AmqpChannel, msg: AmqpMsg):
-        if not self._pika_channels:
+        if not self._connected:
             raise AmqpConnectionNotOpen
 
         self.log.info(
@@ -131,8 +132,11 @@ class GeventAmqpConnection(AmqpConnection):
         )
 
     def _run_stages(self):
+        self._connected = False
         for stage in self.stages:
             self._stage_runner(stage)
+
+        self._connected = True
 
     def _stage_runner(self, stage: AmqpStage):
         self.log.info('Starting stage [{}]'.format(stage.name))
@@ -189,7 +193,6 @@ class GeventAmqpConnection(AmqpConnection):
             if res != NEXT_ACTION:
                 return False
 
-        self._current_stage = stage
         return True
 
     def _next_action(self, status=NEXT_ACTION):
@@ -262,7 +265,7 @@ class GeventAmqpConnection(AmqpConnection):
         self._next_action()
 
     def _on_connection_error(self, *_):
-        self._current_stage = None
+        self._connected = False
         self.log.info('connection error')
         self._next_action(BREAK_ACTION)
 
@@ -285,7 +288,7 @@ class GeventAmqpConnection(AmqpConnection):
 
         self._clear_channels()
         self._pika_conn = None
-        self._current_stage = None
+        self._connected = False
         if not self._closing and self._auto_reconnect:
             sleep(self.reconnect_delay)
             spawn(self._run_stages)
