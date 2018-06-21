@@ -17,7 +17,13 @@ from .actions import (
     DeclareExchange,
     DeclareQueue
 )
-from .base import AmqpChannel, AmqpConnection, AmqpConsumer, AmqpStage
+from .base import (
+    AmqpChannel,
+    AmqpConnection,
+    AmqpConnectionNotOpen,
+    AmqpConsumer,
+    AmqpStage
+)
 from .data import AmqpMsg, AmqpParameters
 from .log import setup_logger
 
@@ -75,6 +81,9 @@ class AsyncioAmqpConnection(AmqpConnection):
         return self._cancel_consumer(real_channel, queue, consumer.tag)
 
     async def publish(self, channel: AmqpChannel, msg: AmqpMsg):
+        if not self._channels:
+            raise AmqpConnectionNotOpen
+
         self.log.info(
             'publishing message on channel {}'
             .format(channel.number)

@@ -3,7 +3,11 @@ monkey.patch_all()  # isort:skip
 
 from time import sleep  # noqa: E402
 
-from simple_amqp import AmqpMsg, AmqpParameters  # noqa: E402
+from simple_amqp import (  # noqa: E402
+    AmqpConnectionNotOpen,
+    AmqpMsg,
+    AmqpParameters
+)
 from simple_amqp.gevent import GeventAmqpConnection  # noqa: E402
 
 
@@ -16,11 +20,15 @@ def main():
 
     while True:
         sleep(1)
-        conn.publish(channel, AmqpMsg(
-            exchange='events.exchange',
-            topic='logs.topic',
-            payload=b'hello world',
-        ))
+        try:
+            conn.publish(channel, AmqpMsg(
+                exchange='events.exchange',
+                topic='logs.topic',
+                payload=b'hello world',
+            ))
+        except AmqpConnectionNotOpen:
+            print('Not connected to an AMQP server...')
+            pass
 
 
 if __name__ == '__main__':

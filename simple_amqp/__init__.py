@@ -1,6 +1,7 @@
 from .base import (
     AmqpChannel,
     AmqpConnection,
+    AmqpConnectionNotOpen,
     AmqpExchange,
     AmqpQueue,
     AmqpStage
@@ -17,4 +18,5 @@ __all__ = [
     'AmqpMsg',
     'AmqpParameters',
     'AmqpConsumerCallback',
+    'AmqpConnectionNotOpen',
 ]

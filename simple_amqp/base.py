@@ -16,6 +16,10 @@ from .data import AmqpConsumerCallback, AmqpMsg, AmqpParameters
 ZERO_STAGE_NAME = '0:init'
 
 
+class AmqpConnectionNotOpen(Exception):
+    pass
+
+
 def create_name(name):
     if not name:
         name = 'private.{}'.format(str(uuid4()))
