@@ -408,6 +408,7 @@ class GeventAmqpConnection(AmqpConnection):
 
         def consumer_callback(channel, deliver, props, payload):
             delivery_tag = deliver.delivery_tag
+            headers = props.headers if props.headers else {}
             msg = AmqpMsg(
                 payload=payload,
                 content_type=props.content_type,
@@ -417,7 +418,7 @@ class GeventAmqpConnection(AmqpConnection):
                 correlation_id=props.correlation_id,
                 reply_to=props.reply_to,
                 expiration=props.expiration,
-                headers=props.headers,
+                headers=headers,
             )
             spawn(self._handle_msg, action, channel, delivery_tag, msg)
 

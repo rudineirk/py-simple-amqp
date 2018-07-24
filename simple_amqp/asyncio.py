@@ -353,6 +353,7 @@ class AsyncioAmqpConnection(AmqpConnection):
         self._consumer_queues[action.tag] = queue
 
         def consumer(pika_msg: PikaIncomingMessage):
+            headers = pika_msg.headers if pika_msg.headers else {}
             msg = AmqpMsg(
                 payload=pika_msg.body,
                 content_type=pika_msg.content_type,
@@ -362,7 +363,7 @@ class AsyncioAmqpConnection(AmqpConnection):
                 correlation_id=pika_msg.correlation_id.decode(),
                 reply_to=pika_msg.reply_to,
                 expiration=pika_msg.expiration,
-                headers=pika_msg.headers,
+                headers=headers,
             )
             ensure_future(self._handle_msg(
                 action,
